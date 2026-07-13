@@ -55,12 +55,14 @@ def run_core_analysis(parsed_events: list[dict], metadata_cache: dict, timezone_
     ).reset_index()
 
     top_channels = channel_group.sort_values('video_count', ascending=False).head(50).to_dict(orient='records')
+    del channel_group  # done with this, free it
 
     df['hour'] = df['local_time'].dt.hour
     df['day_of_week'] = df['local_time'].dt.dayofweek
 
     heatmap = df.groupby(['day_of_week', 'hour']).size().reset_index(name='count')
     temporal_heatmap = heatmap.to_dict(orient='records')
+    del heatmap  # freed
 
     df = df.sort_values('timestamp').reset_index(drop=True)
 
@@ -76,6 +78,7 @@ def run_core_analysis(parsed_events: list[dict], metadata_cache: dict, timezone_
         end_time=('timestamp', 'max'),
         channels=('channel_name', lambda x: list(x.dropna()))
     ).reset_index()
+    del df  # big dataframe done, free it
 
     def get_top_channel(channels_list):
         if not channels_list:
@@ -85,8 +88,9 @@ def run_core_analysis(parsed_events: list[dict], metadata_cache: dict, timezone_
     sessions['top_channel'] = sessions['channels'].apply(get_top_channel)
     sessions.drop(columns=['channels'], inplace=True)
 
-    binges = sessions[(sessions['video_count'] > 5) & (sessions['total_duration_seconds'] > 3600)].copy()
+    binges = sessions[(sessions['video_count'] > 5) & (sessions['total_duration_seconds'] > 3600)]
     # > 5 vids AND > 1 hour, pretty conservative but avoids false positives
+    del sessions  # done with sessions, no need to keep a copy around
 
     if not binges.empty:
         binges['start_time'] = binges['start_time'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')

@@ -17,6 +17,16 @@ RANDOM_STATE = 42  # dont change this unless u know what ur doing
 MODEL_NAME = "all-MiniLM-L6-v2"
 # 384 dims for this model, dont ask me why
 
+# cache the model at module level so we dont reload ~80mb every single request
+_model_instance = None
+def _get_model():
+    global _model_instance
+    if _model_instance is None:
+        from sentence_transformers import SentenceTransformer
+        _model_instance = SentenceTransformer(MODEL_NAME)
+        logger.info("SentenceTransformer model loaded and cached.")
+    return _model_instance
+
 YOUTUBE_CATEGORY_MAP = {
     "1": "Film & Animation",
     "2": "Autos & Vehicles",
@@ -81,11 +91,11 @@ def _load_embeddings(video_ids: list[str], title_map: dict[str, str],
 
     if to_compute_indices:
         logger.info(f"Computing embeddings for {len(to_compute_indices)} uncached videos...")
-        # import inside function b/c sentence_transformers is heavy and we might not need it
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer(MODEL_NAME)
+        # model is cached at module level, no need to reload it every time
+        model = _get_model()
         texts_to_embed = [embed_texts[i] for i in to_compute_indices]
-        computed = model.encode(texts_to_embed, show_progress_bar=False, convert_to_numpy=True)
+        # batch encode so we dont blow memory on huge uploads
+        computed = model.encode(texts_to_embed, show_progress_bar=False, convert_to_numpy=True, batch_size=256)
 
         upsert_rows = []
         for j, i in enumerate(to_compute_indices):
@@ -97,6 +107,9 @@ def _load_embeddings(video_ids: list[str], title_map: dict[str, str],
                 "title_hash": hashes[i],
                 "is_available": (cached[vid].is_available if vid in cached else True),  # preserve is_available or upsert breaks
             })
+
+        # free the big numpy array as soon as we're done with it
+        del computed
 
         stmt = pg_insert(VideoMetadataCache).values(upsert_rows)
         stmt = stmt.on_conflict_do_update(
@@ -158,7 +171,7 @@ def _assign_label(video_ids: list[str], representative_titles: list[str],
 
 def run_clustering_pipeline(
     parsed_events: list[dict],
-    metadata_cache: dict,
+    category_map: dict[str, str],
     db
 ) -> tuple[list | None, list | None, str | None]:
     from sklearn.cluster import KMeans
@@ -178,14 +191,7 @@ def run_clustering_pipeline(
         if ts:
             video_to_timestamps.setdefault(vid, []).append(ts)
 
-    category_map: dict[str, str] = {}
-    for vid, obj in metadata_cache.items():
-        # handle both ORM objects and plain dicts, idk which one we get sometimes
-        cat = obj.category if hasattr(obj, "category") else (obj.get("category") if isinstance(obj, dict) else None)
-        if cat:
-            category_map[vid] = str(cat)
-
-    enriched_ids = [vid for vid in title_map if vid in metadata_cache]
+    enriched_ids = [vid for vid in title_map if vid in category_map]
 
     if len(enriched_ids) < CLUSTERING_MIN_VIDEOS:
         reason = (
@@ -264,6 +270,10 @@ def run_clustering_pipeline(
         label = next((e["label"] for e in genre_breakdown if label_to_cluster_id[e["label"]] == raw_id), OTHER_LABEL)
         for vid in data["video_ids"]:
             vid_to_label[vid] = label
+
+    # done with the heavy stuff, free memory
+    del matrix
+    del clusters
 
     from collections import defaultdict
     monthly: dict[str, list[str]] = defaultdict(list)

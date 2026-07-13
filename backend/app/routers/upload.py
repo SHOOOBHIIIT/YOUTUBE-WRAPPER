@@ -1,4 +1,5 @@
 import uuid
+import gc
 import logging
 import asyncio
 import concurrent.futures
@@ -39,16 +40,20 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
 
         try:
             parsed_events = parse_watch_history(entries)
-            upload_record.parsed_events = [e.model_dump(mode='json') for e in parsed_events]
-        # store parsed events right away so we dont lose them if enrichment fails
+            # dump once and reuse — no need to call model_dump() 3 times like we used to lol
+            parsed_dicts = [e.model_dump(mode='json') for e in parsed_events]
+            upload_record.parsed_events = parsed_dicts
             upload_record.raw_entry_count = len(parsed_events)
+            # free the raw zip entries and pydantic objects, we only need parsed_dicts now
+            del entries
+            del parsed_events
             db.commit()
         except Exception as e:
             logger.exception("Failed to parse watch history")
             _mark_failed(db, upload_record, "Failed to parse watch history.")
             return
 
-        video_ids = {e.video_id for e in parsed_events if e.video_id}
+        video_ids = {ev.get("video_id") for ev in parsed_dicts if ev.get("video_id")}
         # some events dont have video_id (like ads or removed vids)
         try:
             metadata_cache = await enrich_videos(video_ids, db, upload_id=upload_id)
@@ -63,7 +68,7 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
         try:
             logger.info("Starting analysis pipeline...")
             analysis_results = run_core_analysis(
-                parsed_events=[e.model_dump() for e in parsed_events],
+                parsed_events=parsed_dicts,
                 metadata_cache=metadata_cache,
                 timezone_str=timezone_str
             )
@@ -83,14 +88,26 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             logger.exception("Analysis pipeline failed")
             _mark_failed(db, upload_record, "Failed to analyze watch history data.")
             return
+        # analysis done, force python to free those pandas dataframes
+        gc.collect()
+
+        # extract just the category info before freeing metadata_cache
+        # clusterer only needs category_map, not the whole ORM object dict
+        category_map = {}
+        for vid, obj in metadata_cache.items():
+            cat = obj.category if hasattr(obj, "category") else (obj.get("category") if isinstance(obj, dict) else None)
+            if cat:
+                category_map[vid] = str(cat)
+        del metadata_cache
+        gc.collect()
 
         try:
             logger.info("Starting clustering pipeline...")
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
                     run_clustering_pipeline,
-                    parsed_events=[e.model_dump() for e in parsed_events],
-                    metadata_cache=metadata_cache,
+                    parsed_events=parsed_dicts,
+                    category_map=category_map,
                     db=db
                 )
                 genre_breakdown, taste_drift, skipped_reason = future.result(timeout=300)

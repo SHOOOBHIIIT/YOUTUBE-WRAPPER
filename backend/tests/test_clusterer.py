@@ -23,13 +23,9 @@ def _make_events(n: int, prefix: str = "Video", channel: str = "Channel") -> lis
 
 
 def _make_cache(video_ids: list[str], category: str = "17") -> dict:
-    class FakeRecord:
-        def __init__(self):
-            self.category = category
-            self.is_available = True
-            self.embedding = None
-            self.title_hash = None
-    return {vid: FakeRecord() for vid in video_ids}
+    # now we just return a plain {vid: category_string} dict since
+    # run_clustering_pipeline takes category_map directly instead of the full ORM cache
+    return {vid: category for vid in video_ids}
 
 
 def _fake_embeddings(n: int, dims: int = 384, seed: int = 0) -> np.ndarray:
