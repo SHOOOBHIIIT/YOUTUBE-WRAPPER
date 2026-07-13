@@ -1,4 +1,5 @@
 import logging
+from sqlalchemy import text
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -29,6 +30,11 @@ def create_tables():
     # create tables on startup, runs once and thats it
     logger.info("Creating database tables...")
     Base.metadata.create_all(bind=engine)
+    # create_all only creates NEW tables, doesnt add columns to existing ones
+    # so we need this manual migration until we set up alembic or whatever
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE wrapped_results ADD COLUMN IF NOT EXISTS clustering_skipped_reason VARCHAR"))
+        conn.commit()
     logger.info("Database tables ready.")
 
 app.include_router(health.router, tags=["Health"])
