@@ -100,9 +100,8 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             db.commit()
             # partial results are still usefull, dont fail the whole thing
 
-    upload_record.status = UploadStatus.COMPLETE
-    db.commit()
-    # TODO: maybe send a notification when processing is done?
+        upload_record.status = UploadStatus.COMPLETE
+        db.commit()
     finally:
         db.close()
 
