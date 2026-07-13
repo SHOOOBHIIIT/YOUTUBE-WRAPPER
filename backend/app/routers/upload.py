@@ -1,6 +1,7 @@
 import uuid
 import logging
-import asyncio  # asyncio isnt actually used here rn, might need it later tho
+import asyncio
+import concurrent.futures
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 
@@ -85,14 +86,21 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
 
         try:
             logger.info("Starting clustering pipeline...")
-            genre_breakdown, taste_drift, skipped_reason = run_clustering_pipeline(
-                parsed_events=[e.model_dump() for e in parsed_events],
-                metadata_cache=metadata_cache,
-                db=db
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    run_clustering_pipeline,
+                    parsed_events=[e.model_dump() for e in parsed_events],
+                    metadata_cache=metadata_cache,
+                    db=db
+                )
+                genre_breakdown, taste_drift, skipped_reason = future.result(timeout=300)
             wrapped_result.genre_breakdown = genre_breakdown
             wrapped_result.taste_drift = taste_drift
             wrapped_result.clustering_skipped_reason = skipped_reason
+            db.commit()
+        except concurrent.futures.TimeoutError:
+            logger.warning("Clustering pipeline timed out after 5 minutes")
+            wrapped_result.clustering_skipped_reason = "Clustering timed out — genre breakdown unavailable."
             db.commit()
         except Exception as e:
             logger.exception("Clustering pipeline failed")
