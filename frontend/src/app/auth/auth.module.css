@@ -1,0 +1,81 @@
+.card {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  text-align: center;
+  padding: 48px 40px;
+  position: relative;
+}
+
+.logoWrap {
+  width: 64px;
+  height: 64px;
+  background: rgba(255, 174, 92, 0.08);
+  border: 1px solid rgba(255, 174, 92, 0.15);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 20px rgba(255, 174, 92, 0.08), 0 0 40px rgba(255, 174, 92, 0.04);
+  position: relative;
+}
+
+.logoDot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--phosphor);
+  box-shadow: 0 0 12px rgba(255, 174, 92, 0.4);
+}
+
+.powerLed {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 6px rgba(232, 80, 58, 0.6), 0 0 12px rgba(232, 80, 58, 0.3);
+  animation: ledPulse 2s ease-in-out infinite;
+}
+
+.title {
+  color: var(--text-primary);
+}
+
+.subtitle {
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.googleBtn {
+  width: 100%;
+  padding: 14px 24px;
+  font-size: 1rem;
+  border-radius: var(--radius-md);
+}
+
+.disclaimer {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-medium);
+  border-top-color: var(--phosphor);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes ledPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
