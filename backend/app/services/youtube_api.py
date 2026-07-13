@@ -65,12 +65,6 @@ async def enrich_videos(video_ids: set[str], db: Session, upload_id: str = None)
         for i in range(0, len(ids_to_fetch), 50):  # youtube only lets 50 ids per request
             batch = ids_to_fetch[i:i+50]
 
-            if upload_id:
-                upload = db.query(UploadedHistory).filter_by(id=upload_id).first()
-                if upload:
-                    upload.updated_at = datetime.now(timezone.utc)
-                    db.commit()
-
             try:
                 response = await client.get(
                     YOUTUBE_API_URL,
@@ -163,5 +157,12 @@ async def enrich_videos(video_ids: set[str], db: Session, upload_id: str = None)
 
                 for r in records_to_upsert:
                     valid_cache[r["video_id"]] = VideoMetadataCache(**r)
+
+        # update the upload timestamp once after all batches, not per batch
+        if upload_id:
+            upload = db.query(UploadedHistory).filter_by(id=upload_id).first()
+            if upload:
+                upload.updated_at = datetime.now(timezone.utc)
+                db.commit()
 
     return valid_cache

@@ -30,6 +30,7 @@ export default function UploadClient() {
 
   const handleDeleteWrap = async (e, uploadId) => {
     e.preventDefault();
+    e.stopPropagation();  // stop the click from bubbling up to the parent Link
     if (!confirm("Are you sure you want to delete this Wrapped result?")) return;
     
     try {

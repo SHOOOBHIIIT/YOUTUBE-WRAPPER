@@ -4,7 +4,6 @@ import hashlib
 import logging
 import re
 from collections import Counter
-from datetime import timezone
 
 import numpy as np
 
@@ -250,9 +249,14 @@ def run_clustering_pipeline(
             sorted_pairs = sorted(zip(dists, vids))
             representative_titles = [title_map.get(v, "") for _, v in sorted_pairs[:5]]
             display_label = _assign_label(vids, representative_titles, category_map)
+            # handle label collisions — keep appending (2), (3), etc until unique
+            # the old code only checked once which broke when 3+ clusters had the same name
             existing = {e["label"] for e in genre_breakdown}
             if display_label in existing:
-                display_label = f"{display_label} (2)"
+                counter = 2
+                while f"{display_label} ({counter})" in existing:
+                    counter += 1
+                display_label = f"{display_label} ({counter})"
 
         entry = {
             "label": display_label,

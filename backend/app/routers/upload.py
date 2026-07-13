@@ -1,7 +1,5 @@
 import uuid
-import gc
 import logging
-import asyncio
 import concurrent.futures
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -28,6 +26,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_ZIP_SIZE_BYTES = 200 * 1024 * 1024  # 200mb should be more than enuf for youtube history
+# one thread pool for the whole app instead of creating a new one per upload
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 
 async def process_upload_task(upload_id: str, entries: list[dict], timezone_str: str):
@@ -48,7 +48,7 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             del entries
             del parsed_events
             db.commit()
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to parse watch history")
             _mark_failed(db, upload_record, "Failed to parse watch history.")
             return
@@ -60,7 +60,7 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
         except QuotaExceededError:
             _mark_failed(db, upload_record, "YouTube API quota exceeded, try again tomorrow.")
             return
-        except Exception as e:
+        except Exception:
             logger.exception("Enrichment failed")
             _mark_failed(db, upload_record, "Failed to enrich data from YouTube API.")
             return
@@ -84,12 +84,10 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             db.add(wrapped_result)
             db.commit()
 
-        except Exception as e:
+        except Exception:
             logger.exception("Analysis pipeline failed")
             _mark_failed(db, upload_record, "Failed to analyze watch history data.")
             return
-        # analysis done, force python to free those pandas dataframes
-        gc.collect()
 
         # extract just the category info before freeing metadata_cache
         # clusterer only needs category_map, not the whole ORM object dict
@@ -99,11 +97,10 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             if cat:
                 category_map[vid] = str(cat)
         del metadata_cache
-        gc.collect()
 
         try:
             logger.info("Starting clustering pipeline...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            with _thread_pool as executor:
                 future = executor.submit(
                     run_clustering_pipeline,
                     parsed_events=parsed_dicts,
@@ -119,7 +116,7 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
             logger.warning("Clustering pipeline timed out after 5 minutes")
             wrapped_result.clustering_skipped_reason = "Clustering timed out — genre breakdown unavailable."
             db.commit()
-        except Exception as e:
+        except Exception:
             logger.exception("Clustering pipeline failed")
             wrapped_result.clustering_skipped_reason = "Clustering failed due to an internal error."
             db.commit()
@@ -174,6 +171,8 @@ async def upload_watch_history(
         status_code = 400 if isinstance(e, (ZipValidationError, ZipBombError)) else 422
         # 400 for bad zip, 422 for other validation errors
         raise HTTPException(status_code=status_code, detail=str(e))
+    finally:
+        del zip_bytes  # free the raw zip, we got what we need
 
     background_tasks.add_task(process_upload_task, upload_id, entries, timezone)
 

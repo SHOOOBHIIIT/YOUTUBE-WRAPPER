@@ -19,7 +19,7 @@ def run_core_analysis(parsed_events: list[dict], metadata_cache: dict, timezone_
         if not vid or vid not in metadata_cache:
             return 0
         obj = metadata_cache[vid]
-        # handles both sqlalchemy objects and dicts b/c im not sure which one we get
+        # handles both sqlalchemy objects and dicts (tests pass dicts)
         if hasattr(obj, 'duration_seconds'):
             return obj.duration_seconds or 0
         elif isinstance(obj, dict):

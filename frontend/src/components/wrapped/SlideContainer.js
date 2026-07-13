@@ -98,10 +98,11 @@ export default function SlideContainer({ data }) {
         setProgress(pct);
         if (pct >= 100) goNextRef.current();
         else frame = requestAnimationFrame(tick);
-      } else {
-        if (currentIndex === slides.length - 1) setProgress(100);
-        frame = requestAnimationFrame(tick);
+      } else if (currentIndex === slides.length - 1) {
+        // last slide, just show full progress bar
+        setProgress(100);
       }
+      // when paused, dont schedule another frame — saves cpu cycles
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
@@ -168,7 +169,7 @@ export default function SlideContainer({ data }) {
             <div style={{
               height: "100%",
               borderRadius: 99,
-              background: i === currentIndex ? "#FFAE5C" : i < currentIndex ? "var(--rust)" : "0%",
+              background: i === currentIndex ? "#FFAE5C" : i < currentIndex ? "var(--rust)" : "transparent",
               width: i === currentIndex ? `${progress}%` : i < currentIndex ? "100%" : "0%",
               transition: i === currentIndex && !isPaused ? "width 0.1s linear" : "none",
               boxShadow: i === currentIndex ? "0 0 8px rgba(255,174,92,0.6)" : "none",

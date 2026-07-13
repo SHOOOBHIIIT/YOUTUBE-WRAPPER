@@ -15,6 +15,7 @@ class WrappedResult(Base):
     binge_sessions = Column(JSON, nullable=True)    # Populated in M3
     temporal_heatmap = Column(JSON, nullable=True)  # Populated in M3
     taste_drift = Column(JSON, nullable=True)
+    clustering_skipped_reason = Column(String, nullable=True)  # populated if clustering was skipped or failed
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", backref="results")
