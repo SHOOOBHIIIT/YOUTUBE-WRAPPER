@@ -1,6 +1,10 @@
 [build]
 builder = "nixpacks"
 
+# force python 3.11 so nixpacks doesnt pick a random version
+[build.env]
+NIXPACKS_PYTHON_VERSION = "3.11"
+
 [deploy]
 startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
