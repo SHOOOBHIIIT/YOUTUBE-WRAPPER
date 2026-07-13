@@ -100,14 +100,13 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
 
         try:
             logger.info("Starting clustering pipeline...")
-            with _thread_pool as executor:
-                future = executor.submit(
-                    run_clustering_pipeline,
-                    parsed_events=parsed_dicts,
-                    category_map=category_map,
-                    db=db
-                )
-                genre_breakdown, taste_drift, skipped_reason = future.result(timeout=300)
+            future = _thread_pool.submit(
+                run_clustering_pipeline,
+                parsed_events=parsed_dicts,
+                category_map=category_map,
+                db=db
+            )
+            genre_breakdown, taste_drift, skipped_reason = future.result(timeout=300)
             wrapped_result.genre_breakdown = genre_breakdown
             wrapped_result.taste_drift = taste_drift
             wrapped_result.clustering_skipped_reason = skipped_reason

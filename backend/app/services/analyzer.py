@@ -39,7 +39,7 @@ def run_core_analysis(parsed_events: list[dict], metadata_cache: dict, timezone_
             "binge_sessions": {"top_by_count": [], "top_by_duration": []}
         }
 
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed', utc=True)
 
     try:
         user_tz = pytz.timezone(timezone_str)
