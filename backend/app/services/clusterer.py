@@ -85,74 +85,109 @@ def _load_embeddings(video_ids: list[str], title_map: dict[str, str],
         logger.info(f"Computing embeddings for {len(to_compute_indices)} uncached videos via HF API...")
         texts_to_embed = [embed_texts[i] for i in to_compute_indices]
 
-        import httpx
-        from app.config import settings
+        hf_failed = False
+        try:
+            import httpx
+            from app.config import settings
 
-        headers = {"Authorization": f"Bearer {settings.hf_api_token}"}
-        all_embeddings = []
+            headers = {"Authorization": f"Bearer {settings.hf_api_token}"}
+            all_embeddings = []
 
-        for batch_start in range(0, len(texts_to_embed), HF_BATCH_SIZE):
-            batch = texts_to_embed[batch_start:batch_start + HF_BATCH_SIZE]
-            for attempt in range(3):
-                # hf returns 503 while the model wakes up (cold start ~5-15s)
-                # backoff so we dont spam their servers like a clown
-                try:
-                    resp = httpx.post(
-                        HF_API_URL,
-                        headers=headers,
-                        json={"inputs": batch},
-                        timeout=120
-                    )
-                    resp.raise_for_status()
-                    batch_embs = np.array(resp.json(), dtype=np.float32)
-                    all_embeddings.append(batch_embs)
-                    break
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 503 and attempt < 2:
-                        wait = 5 * (2 ** attempt)
-                        logger.warning(f"HF API 503 (model loading), retrying in {wait}s...")
-                        time.sleep(wait)
-                        continue
-                    logger.error(f"HF API HTTP error: {e.response.status_code} - {e.response.text[:200]}")
-                    raise
-                except (httpx.TimeoutException, httpx.ConnectError) as e:
-                    if attempt < 2:
-                        wait = 5 * (2 ** attempt)
-                        logger.warning(f"HF API connection error, retrying in {wait}s...")
-                        time.sleep(wait)
-                        continue
-                    raise
+            for batch_start in range(0, len(texts_to_embed), HF_BATCH_SIZE):
+                batch = texts_to_embed[batch_start:batch_start + HF_BATCH_SIZE]
+                for attempt in range(3):
+                    # hf returns 503 while the model wakes up (cold start ~5-15s)
+                    # backoff so we dont spam their servers like a clown
+                    try:
+                        resp = httpx.post(
+                            HF_API_URL,
+                            headers=headers,
+                            json={"inputs": batch},
+                            timeout=120
+                        )
+                        resp.raise_for_status()
+                        batch_embs = np.array(resp.json(), dtype=np.float32)
+                        all_embeddings.append(batch_embs)
+                        break
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 503 and attempt < 2:
+                            wait = 5 * (2 ** attempt)
+                            logger.warning(f"HF API 503 (model loading), retrying in {wait}s...")
+                            time.sleep(wait)
+                            continue
+                        logger.error(f"HF API HTTP error: {e.response.status_code} - {e.response.text[:200]}")
+                        raise
+                    except (httpx.TimeoutException, httpx.ConnectError) as e:
+                        if attempt < 2:
+                            wait = 5 * (2 ** attempt)
+                            logger.warning(f"HF API connection error, retrying in {wait}s...")
+                            time.sleep(wait)
+                            continue
+                        raise
 
-        if len(all_embeddings) > 1:
-            computed = np.vstack(all_embeddings)
-        else:
-            computed = all_embeddings[0]
+            if len(all_embeddings) > 1:
+                computed = np.vstack(all_embeddings)
+            else:
+                computed = all_embeddings[0]
 
-        upsert_rows = []
-        for j, i in enumerate(to_compute_indices):
-            vid = valid_ids[i]
-            embeddings[i] = computed[j]
-            upsert_rows.append({
-                "video_id": vid,
-                "embedding": computed[j].tolist(),
-                "title_hash": hashes[i],
-                "is_available": (cached[vid].is_available if vid in cached else True),
-            })
+            upsert_rows = []
+            for j, i in enumerate(to_compute_indices):
+                vid = valid_ids[i]
+                embeddings[i] = computed[j]
+                upsert_rows.append({
+                    "video_id": vid,
+                    "embedding": computed[j].tolist(),
+                    "title_hash": hashes[i],
+                    "is_available": (cached[vid].is_available if vid in cached else True),
+                })
 
-        # free the big numpy array as soon as we're done with it
-        del computed
+            # free the big numpy array as soon as we're done with it
+            del computed
 
-        stmt = pg_insert(VideoMetadataCache).values(upsert_rows)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["video_id"],
-            set_={
-                "embedding": stmt.excluded.embedding,
-                "title_hash": stmt.excluded.title_hash,
-            }
-        )
-        db.execute(stmt)
-        db.commit()
-        logger.info("Embedding cache updated.")
+            stmt = pg_insert(VideoMetadataCache).values(upsert_rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["video_id"],
+                set_={
+                    "embedding": stmt.excluded.embedding,
+                    "title_hash": stmt.excluded.title_hash,
+                }
+            )
+            db.execute(stmt)
+            db.commit()
+            logger.info("Embedding cache updated.")
+        except Exception as e:
+            logger.warning(f"HF API unavailable ({e}), falling back to TF-IDF embeddings")
+            hf_failed = True
+
+    # if hf failed or we had no cached embeddings, use tf-idf as fallback
+    if any(e is None for e in embeddings) or not embeddings or all(e is None for e in embeddings):
+        if not hf_failed:
+            # only log if we actually need the fallback (not just cached)
+            needs_fallback = not to_compute_indices or hf_failed
+            if needs_fallback:
+                pass  # already logged above or no uncached
+            else:
+                pass  # all cached, no fallback needed
+
+        if hf_failed or (to_compute_indices and all(embeddings[i] is None for i in to_compute_indices)):
+            logger.info("Using TF-IDF fallback for embeddings...")
+            from sklearn.feature_extraction.text import TfidfVectorizer
+
+            all_texts = [_build_embed_text(title_map.get(v, ""), category_map.get(v)) for v in valid_ids]
+            vectorizer = TfidfVectorizer(max_features=384, stop_words="english", token_pattern=r"(?u)\b[a-zA-Z]{2,}\b")
+            tfidf_matrix = vectorizer.fit_transform(all_texts)
+            tfidf_dense = np.array(tfidf_matrix.toarray(), dtype=np.float32)
+
+            # pad or truncate to 384 dims
+            if tfidf_dense.shape[1] < 384:
+                pad = np.zeros((tfidf_dense.shape[0], 384 - tfidf_dense.shape[1]), dtype=np.float32)
+                tfidf_dense = np.hstack([tfidf_dense, pad])
+            elif tfidf_dense.shape[1] > 384:
+                tfidf_dense = tfidf_dense[:, :384]
+
+            for i in range(len(valid_ids)):
+                if embeddings[i] is None:
+                    embeddings[i] = tfidf_dense[i]
 
     paired = [(vid, emb) for vid, emb in zip(valid_ids, embeddings) if emb is not None]
     if not paired:
