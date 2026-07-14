@@ -1,6 +1,6 @@
 "use client";
 import { motion } from "motion/react";
-import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 const GENRE_COLORS = ["#FFAE5C", "#E8503A", "#7FD8FF", "#D9DEE6", "#8B5E3C", "#c9a87c", "#a09080", "#b8a890"];
 const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -83,13 +83,20 @@ export default function Slide6TasteDrift({ data }) {
           style={{ flex: 1, minHeight: 0, position: "relative", margin: "0 -8px" }}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis
                 dataKey="month"
                 stroke="transparent"
                 tick={{ fill: "var(--text-muted)", fontSize: 11, fontWeight: 500, fontFamily: "var(--font-mono)" }}
                 axisLine={false} tickLine={false}
                 dy={10}
+              />
+              <YAxis
+                stroke="transparent"
+                tick={{ fill: "var(--text-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                axisLine={false} tickLine={false}
+                tickFormatter={(v) => `${v}%`}
               />
               <Tooltip
                 contentStyle={{
@@ -98,17 +105,19 @@ export default function Slide6TasteDrift({ data }) {
                   fontFamily: "var(--font-mono)", boxShadow: "0 8px 30px rgba(0,0,0,0.5)"
                 }}
                 itemStyle={{ color: "var(--text-primary)", padding: "2px 0" }}
+                formatter={(value) => [`${value}%`]}
               />
               {allGenres.map((key, i) => (
-                <Area
+                <Line
                   key={key} type="monotone" dataKey={key}
-                  stackId="1" stroke="none"
-                  fill={GENRE_COLORS[i % GENRE_COLORS.length]}
-                  fillOpacity={0.85}
+                  stroke={GENRE_COLORS[i % GENRE_COLORS.length]}
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: GENRE_COLORS[i % GENRE_COLORS.length], strokeWidth: 0 }}
+                  activeDot={{ r: 6, stroke: GENRE_COLORS[i % GENRE_COLORS.length], strokeWidth: 2, fill: "var(--void)" }}
                   isAnimationActive animationBegin={700} animationDuration={1400}
                 />
               ))}
-            </AreaChart>
+            </LineChart>
           </ResponsiveContainer>
         </motion.div>
 
