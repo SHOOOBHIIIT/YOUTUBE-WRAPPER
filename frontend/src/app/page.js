@@ -3,12 +3,14 @@ import styles from "./page.module.css";
 import CRTHeroSection from "./CRTHeroSection";
 import ScrollReveals from "./ScrollReveals";
 import TypewriterText from "../components/TypewriterText";
+import WarmUpPing from "../components/WarmUpPing";
 import PlayButtonSpotlight from "./PlayButtonSpotlight";
 import ParticleDust from "./ParticleDust";
 
 export default function Home() {
   return (
     <main className={styles.main}>
+      <WarmUpPing />
       <ScrollReveals />
 
       {/* Navbar */}

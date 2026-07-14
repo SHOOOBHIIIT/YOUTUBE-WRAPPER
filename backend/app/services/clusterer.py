@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import re
+import time
 from collections import Counter
 
 import numpy as np
@@ -15,16 +16,8 @@ SMALL_CLUSTER_PCT = 0.02
 RANDOM_STATE = 42  # dont change this unless u know what ur doing
 MODEL_NAME = "all-MiniLM-L6-v2"
 # 384 dims for this model, dont ask me why
-
-# cache the model at module level so we dont reload ~80mb every single request
-_model_instance = None
-def _get_model():
-    global _model_instance
-    if _model_instance is None:
-        from sentence_transformers import SentenceTransformer
-        _model_instance = SentenceTransformer(MODEL_NAME)
-        logger.info("SentenceTransformer model loaded and cached.")
-    return _model_instance
+HF_API_URL = f"https://api-inference.huggingface.co/models/sentence-transformers/{MODEL_NAME}"
+HF_BATCH_SIZE = 100  # hf gets mad if u send more than this at once
 
 YOUTUBE_CATEGORY_MAP = {
     "1": "Film & Animation",
@@ -89,12 +82,51 @@ def _load_embeddings(video_ids: list[str], title_map: dict[str, str],
             to_compute_indices.append(i)
 
     if to_compute_indices:
-        logger.info(f"Computing embeddings for {len(to_compute_indices)} uncached videos...")
-        # model is cached at module level, no need to reload it every time
-        model = _get_model()
+        logger.info(f"Computing embeddings for {len(to_compute_indices)} uncached videos via HF API...")
         texts_to_embed = [embed_texts[i] for i in to_compute_indices]
-        # batch encode so we dont blow memory on huge uploads
-        computed = model.encode(texts_to_embed, show_progress_bar=False, convert_to_numpy=True, batch_size=256)
+
+        import httpx
+        from app.config import settings
+
+        headers = {"Authorization": f"Bearer {settings.hf_api_token}"}
+        all_embeddings = []
+
+        for batch_start in range(0, len(texts_to_embed), HF_BATCH_SIZE):
+            batch = texts_to_embed[batch_start:batch_start + HF_BATCH_SIZE]
+            for attempt in range(3):
+                # hf returns 503 while the model wakes up (cold start ~5-15s)
+                # backoff so we dont spam their servers like a clown
+                try:
+                    resp = httpx.post(
+                        HF_API_URL,
+                        headers=headers,
+                        json={"inputs": batch},
+                        timeout=120
+                    )
+                    resp.raise_for_status()
+                    batch_embs = np.array(resp.json(), dtype=np.float32)
+                    all_embeddings.append(batch_embs)
+                    break
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 503 and attempt < 2:
+                        wait = 5 * (2 ** attempt)
+                        logger.warning(f"HF API 503 (model loading), retrying in {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    logger.error(f"HF API HTTP error: {e.response.status_code} - {e.response.text[:200]}")
+                    raise
+                except (httpx.TimeoutException, httpx.ConnectError) as e:
+                    if attempt < 2:
+                        wait = 5 * (2 ** attempt)
+                        logger.warning(f"HF API connection error, retrying in {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    raise
+
+        if len(all_embeddings) > 1:
+            computed = np.vstack(all_embeddings)
+        else:
+            computed = all_embeddings[0]
 
         upsert_rows = []
         for j, i in enumerate(to_compute_indices):
@@ -104,7 +136,7 @@ def _load_embeddings(video_ids: list[str], title_map: dict[str, str],
                 "video_id": vid,
                 "embedding": computed[j].tolist(),
                 "title_hash": hashes[i],
-                "is_available": (cached[vid].is_available if vid in cached else True),  # preserve is_available or upsert breaks
+                "is_available": (cached[vid].is_available if vid in cached else True),
             })
 
         # free the big numpy array as soon as we're done with it
@@ -139,7 +171,7 @@ def _label_from_categories(video_ids: list[str], category_map: dict[str, str]) -
     if coverage < 0.5:
         return None
     top = [name for name, _ in Counter(cats).most_common(2)]  # take top 2, more than that gets confusing
-    return " · ".join(top) if top else None
+    return " \u00b7 ".join(top) if top else None
 
 
 _STOPWORDS = {"the", "a", "an", "is", "in", "of", "to", "and", "for", "with",
@@ -149,6 +181,7 @@ _STOPWORDS = {"the", "a", "an", "is", "in", "of", "to", "and", "for", "with",
                "video", "ep", "episode", "part", "full", "season", "series"}
 # pretty sure this list is incomplete but good enuf for now
 
+
 def _label_from_titles(titles: list[str]) -> str:
     words = []
     for t in titles:
@@ -157,7 +190,7 @@ def _label_from_titles(titles: list[str]) -> str:
     if not words:
         return "Mixed Content"
     top = [w.title() for w, _ in Counter(words).most_common(2)]
-    return " · ".join(top) if top else "Mixed Content"
+    return " \u00b7 ".join(top) if top else "Mixed Content"
 
 
 def _assign_label(video_ids: list[str], representative_titles: list[str],
@@ -207,7 +240,7 @@ def run_clustering_pipeline(
         return None, None, reason
 
     # log the params just in case something looks off
-    logger.info(f"Running K-Means (k≤{K_MAX}, random_state={RANDOM_STATE}) on {len(valid_ids)} videos...")
+    logger.info(f"Running K-Means (k\u2264{K_MAX}, random_state={RANDOM_STATE}) on {len(valid_ids)} videos...")
 
     k = min(K_MAX, len(valid_ids))
     kmeans = KMeans(n_clusters=k, random_state=RANDOM_STATE, n_init="auto")

@@ -1,4 +1,5 @@
 import uuid
+import asyncio
 import logging
 import concurrent.futures
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks
@@ -33,10 +34,23 @@ _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 async def process_upload_task(upload_id: str, entries: list[dict], timezone_str: str):
     # this runs in the background, dont block the upload response
     db = SessionLocal()
+    heartbeat_task = None
     try:
         upload_record = db.query(UploadedHistory).get(upload_id)
         if not upload_record:
             return
+
+        # touch updated_at every 10s so status.py doesnt think we died
+        async def _heartbeat():
+            while True:
+                await asyncio.sleep(10)
+                try:
+                    db.refresh(upload_record)
+                    db.commit()
+                except Exception:
+                    pass
+
+        heartbeat_task = asyncio.create_task(_heartbeat())
 
         try:
             parsed_events = parse_watch_history(entries)
@@ -124,6 +138,8 @@ async def process_upload_task(upload_id: str, entries: list[dict], timezone_str:
         upload_record.status = UploadStatus.COMPLETE
         db.commit()
     finally:
+        if heartbeat_task:
+            heartbeat_task.cancel()
         db.close()
 
 
