@@ -16,7 +16,7 @@ SMALL_CLUSTER_PCT = 0.02
 RANDOM_STATE = 42  # dont change this unless u know what ur doing
 MODEL_NAME = "all-MiniLM-L6-v2"
 # 384 dims for this model, dont ask me why
-HF_API_URL = f"https://api-inference.huggingface.co/models/sentence-transformers/{MODEL_NAME}"
+HF_API_URL = f"https://router.huggingface.co/hf-inference/models/sentence-transformers/{MODEL_NAME}"
 HF_BATCH_SIZE = 100  # hf gets mad if u send more than this at once
 
 YOUTUBE_CATEGORY_MAP = {
