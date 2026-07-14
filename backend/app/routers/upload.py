@@ -6,6 +6,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, B
 from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
+from app.models.user import User
 from app.models.upload import UploadedHistory, UploadStatus
 from app.models.result import WrappedResult
 from app.services.zip_handler import (
@@ -166,6 +167,12 @@ async def upload_watch_history(
                    f"Maximum allowed is {MAX_ZIP_SIZE_BYTES // (1024*1024)} MB. "
                    f"Try exporting only YouTube history (not all Google data)."
         )
+
+    # auto-provision user if they dont exist yet (auth/sync might have failed silently)
+    existing_user = db.query(User).filter(User.id == user_id).first()
+    if not existing_user:
+        db.add(User(id=user_id, google_id=user_id, email=f"{user_id}@placeholder.local"))
+        db.commit()
 
     upload_id = str(uuid.uuid4())
 
